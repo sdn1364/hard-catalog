@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { pathToFileURL } from 'node:url'
 
 export type CatalogState = {
   filePath: string | null
@@ -11,6 +12,7 @@ export type RecentProjectItem = {
   name: string
   lastOpenedAt: number
   exists: boolean
+  coverImageUrl: string | null
 }
 
 export type FolderTreeNode = {
@@ -47,6 +49,13 @@ const api = {
   }): Promise<void> => ipcRenderer.invoke('window:setTitleBarOverlay', opts),
   catalogListRecent: (): Promise<RecentProjectItem[]> => ipcRenderer.invoke('catalog:listRecent'),
   catalogRemoveRecent: (filePath: string): Promise<void> => ipcRenderer.invoke('catalog:removeRecent', filePath),
+  catalogUpdateRecentProject: (payload: {
+    filePath: string
+    name?: string
+    sourceImagePath?: string | null
+    clearCover?: boolean
+  }): Promise<void> => ipcRenderer.invoke('catalog:updateRecentProject', payload),
+  pathToFileUrl: (filePath: string): string => pathToFileURL(filePath).href,
   pickImageFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickImageFile'),
   projectSetName: (name: string): Promise<void> => ipcRenderer.invoke('project:setName', name),
   foldersGetTree: (): Promise<FolderTreeNode[]> => ipcRenderer.invoke('folders:getTree'),

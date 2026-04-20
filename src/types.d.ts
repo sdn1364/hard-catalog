@@ -25,6 +25,7 @@ type RecentProjectItem = {
   name: string
   lastOpenedAt: number
   exists: boolean
+  coverImageUrl: string | null
 }
 
 type HardCatalogApi = {
@@ -42,6 +43,13 @@ type HardCatalogApi = {
   }) => Promise<void>
   catalogListRecent: () => Promise<RecentProjectItem[]>
   catalogRemoveRecent: (filePath: string) => Promise<void>
+  catalogUpdateRecentProject: (payload: {
+    filePath: string
+    name?: string
+    sourceImagePath?: string | null
+    clearCover?: boolean
+  }) => Promise<void>
+  pathToFileUrl: (filePath: string) => string
   pickImageFile: () => Promise<string | null>
   projectSetName: (name: string) => Promise<void>
   foldersGetTree: () => Promise<FolderTreeNode[]>

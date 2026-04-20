@@ -1,4 +1,49 @@
-node_modules
+
 dist
 dist-electron
 release
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build output
+dist/
+dist-electron/
+release/
+build/
+coverage/
+.out/
+.next/
+.output/
+.eslintcache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# VSCode settings
+.vscode/
+*.code-workspace
+
+# Logs
+logs/
+*.log
+logs/**/*.log
+
+# Misc
+*.tgz
+.idea/
+*.sublime-workspace
+*.sublime-project

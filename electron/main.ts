@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import {
   BrowserWindow,
   Menu,
@@ -27,6 +27,10 @@ let mainWindow: BrowserWindow | null = null;
 let currentCatalogPath: string | null = null;
 
 const RECENT_MAX = 15;
+
+/** Stored in catalog SQLite `project_meta` as text (base64 payload + mime). */
+const META_COVER_MIME = "project_cover_mime";
+const META_COVER_BASE64 = "project_cover_base64";
 
 type RecentEntry = {
   filePath: string;
@@ -72,18 +76,111 @@ function touchRecent(state: {
   saveRecentStore(next.slice(0, RECENT_MAX));
 }
 
-function listRecentProjects(): Array<RecentEntry & { exists: boolean }> {
+/** Legacy: copied cover files from older app versions. */
+function deleteCoverFileIfAny(coverPath: string | undefined): void {
+  if (!coverPath) return;
+  try {
+    if (fs.existsSync(coverPath)) fs.unlinkSync(coverPath);
+  } catch {
+    // ignore
+  }
+}
+
+function withCatalogFile<T>(catalogFilePath: string, fn: () => T): T {
+  const fp = path.normalize(catalogFilePath);
+  if (!fs.existsSync(fp)) throw new Error("Catalog file not found.");
+  const prevMain = currentCatalogPath;
+  currentCatalogPath = fp;
+  openDatabase(fp);
+  try {
+    return fn();
+  } finally {
+    currentCatalogPath = prevMain;
+    if (prevMain && fs.existsSync(prevMain)) {
+      openDatabase(prevMain);
+    } else {
+      closeDatabase();
+    }
+  }
+}
+
+function readProjectCoverDataUrl(): string | null {
+  const db = getOrm();
+  const mimeRow = db
+    .select({ value: projectMeta.value })
+    .from(projectMeta)
+    .where(eq(projectMeta.key, META_COVER_MIME))
+    .get() as { value: string } | undefined;
+  const b64Row = db
+    .select({ value: projectMeta.value })
+    .from(projectMeta)
+    .where(eq(projectMeta.key, META_COVER_BASE64))
+    .get() as { value: string } | undefined;
+  if (!mimeRow?.value || !b64Row?.value) return null;
+  return `data:${mimeRow.value};base64,${b64Row.value}`;
+}
+
+function readCoverDataUrlForCatalogPath(catalogFilePath: string): string | null {
+  const fp = path.normalize(catalogFilePath);
+  if (!fs.existsSync(fp)) return null;
+  try {
+    return withCatalogFile(fp, () => readProjectCoverDataUrl());
+  } catch {
+    return null;
+  }
+}
+
+function writeProjectCoverFromFile(sourceImagePath: string): void {
+  const src = path.normalize(sourceImagePath);
+  if (!fs.existsSync(src)) throw new Error("Image file not found.");
+  const buf = fs.readFileSync(src);
+  const mime = inferMimeType(src);
+  const b64 = buf.toString("base64");
+  const db = getOrm();
+  db.insert(projectMeta)
+    .values({ key: META_COVER_MIME, value: mime })
+    .onConflictDoUpdate({
+      target: projectMeta.key,
+      set: { value: mime },
+    })
+    .run();
+  db.insert(projectMeta)
+    .values({ key: META_COVER_BASE64, value: b64 })
+    .onConflictDoUpdate({
+      target: projectMeta.key,
+      set: { value: b64 },
+    })
+    .run();
+  touchProjectUpdatedAt();
+}
+
+function clearProjectCoverInDb(): void {
+  const db = getOrm();
+  db.delete(projectMeta)
+    .where(inArray(projectMeta.key, [META_COVER_MIME, META_COVER_BASE64]))
+    .run();
+}
+
+function listRecentProjects(): Array<
+  RecentEntry & { exists: boolean; coverImageUrl: string | null }
+> {
   return loadRecentStore().map((e) => {
     const fp = path.normalize(e.filePath);
-    return { ...e, filePath: fp, exists: fs.existsSync(fp) };
+    let coverImageUrl: string | null = null;
+    if (fs.existsSync(fp)) {
+      coverImageUrl = readCoverDataUrlForCatalogPath(fp);
+    }
+    return { ...e, filePath: fp, exists: fs.existsSync(fp), coverImageUrl };
   });
 }
 
 function removeRecentProject(filePath: string): void {
   const fp = path.normalize(filePath);
-  const next = loadRecentStore().filter(
-    (e) => path.normalize(e.filePath) !== fp,
-  );
+  const items = loadRecentStore();
+  const found = items.find((e) => path.normalize(e.filePath) === fp);
+  const legacy = found as RecentEntry & { coverImagePath?: string };
+  if (legacy?.coverImagePath) deleteCoverFileIfAny(legacy.coverImagePath);
+  const next = items.filter((e) => path.normalize(e.filePath) !== fp);
   saveRecentStore(next);
 }
 
@@ -113,15 +210,11 @@ function applyInitialTitleBarOverlay(win: BrowserWindow): void {
 }
 
 function createWindow(): void {
-  const frameless =
-    process.platform === "win32" || process.platform === "darwin";
-
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
     minWidth: 900,
     minHeight: 600,
-
     titleBarStyle: "hidden",
     titleBarOverlay: true,
     webPreferences: {
@@ -260,6 +353,55 @@ function registerIpc(): void {
   ipcMain.handle("catalog:removeRecent", (_e, filePath: string) => {
     removeRecentProject(filePath);
   });
+
+  ipcMain.handle(
+    "catalog:updateRecentProject",
+    (
+      _e,
+      payload: {
+        filePath: string;
+        name?: string;
+        sourceImagePath?: string | null;
+        clearCover?: boolean;
+      },
+    ) => {
+      const fp = path.normalize(payload.filePath);
+      const items = loadRecentStore();
+      const idx = items.findIndex((e) => path.normalize(e.filePath) === fp);
+      if (idx < 0) throw new Error("Project is not in the recent list.");
+      if (!fs.existsSync(fp)) throw new Error("Catalog file not found.");
+
+      if (typeof payload.name === "string") {
+        const nextName = payload.name.trim() || defaultProjectName(fp);
+        items[idx] = { ...items[idx], name: nextName };
+        withCatalogFile(fp, () => {
+          const db = getOrm();
+          db.update(projectMeta)
+            .set({ value: nextName })
+            .where(eq(projectMeta.key, "name"))
+            .run();
+          touchProjectUpdatedAt();
+        });
+      }
+
+      if (payload.clearCover) {
+        withCatalogFile(fp, () => {
+          clearProjectCoverInDb();
+          touchProjectUpdatedAt();
+        });
+      } else if (
+        payload.sourceImagePath != null &&
+        payload.sourceImagePath !== ""
+      ) {
+        const src = path.normalize(payload.sourceImagePath);
+        withCatalogFile(fp, () => {
+          writeProjectCoverFromFile(src);
+        });
+      }
+
+      saveRecentStore(items);
+    },
+  );
 
   ipcMain.handle("dialog:pickImageFile", async () => {
     const win = BrowserWindow.getFocusedWindow() ?? mainWindow;

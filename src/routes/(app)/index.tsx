@@ -1,9 +1,11 @@
 import {
   ActionIcon,
+  Box,
   Button,
   Card,
   Container,
   Group,
+  Image,
   Modal,
   SegmentedControl,
   SimpleGrid,
@@ -18,6 +20,8 @@ import { notifications } from "@mantine/notifications";
 import {
   IconDeviceFloppy,
   IconFolderOpen,
+  IconPhoto,
+  IconPencil,
   IconPlus,
   IconTrash,
   IconX,
@@ -48,6 +52,12 @@ function HomePage() {
     updatedAt: null,
   });
   const [modalProjectName, setModalProjectName] = useState("Untitled Catalog");
+  const [editOpened, { open: openEdit, close: closeEdit }] =
+    useDisclosure(false);
+  const [editTarget, setEditTarget] = useState<RecentProjectItem | null>(null);
+  const [editName, setEditName] = useState("");
+  const [pendingImagePath, setPendingImagePath] = useState<string | null>(null);
+  const [clearCover, setClearCover] = useState(false);
 
   const loadRecents = useCallback(async () => {
     try {
@@ -181,6 +191,54 @@ function HomePage() {
       });
     });
 
+  const beginEditProject = (item: RecentProjectItem) => {
+    setEditTarget(item);
+    setEditName(item.name);
+    setPendingImagePath(null);
+    setClearCover(false);
+    openEdit();
+  };
+
+  const saveEditProject = () =>
+    wrap(async () => {
+      if (!editTarget) return;
+      const payload: Parameters<
+        typeof window.hcApi.catalogUpdateRecentProject
+      >[0] = {
+        filePath: editTarget.filePath,
+        name: editName.trim() || editTarget.name,
+      };
+      if (pendingImagePath) {
+        payload.sourceImagePath = pendingImagePath;
+      } else if (clearCover) {
+        payload.clearCover = true;
+      }
+      await window.hcApi.catalogUpdateRecentProject(payload);
+      await loadRecents();
+      const state = await window.hcApi.catalogGetState();
+      if (
+        state.filePath &&
+        pathEquals(state.filePath, editTarget.filePath)
+      ) {
+        await window.hcApi.setWindowTitle(payload.name ?? editTarget.name);
+      }
+      closeEdit();
+      setEditTarget(null);
+      notifications.show({
+        color: "green",
+        title: "Project updated",
+        message: "Your changes were saved.",
+      });
+    });
+
+  const pickEditCover = () =>
+    wrap(async () => {
+      const picked = await window.hcApi.pickImageFile();
+      if (!picked) return;
+      setPendingImagePath(picked);
+      setClearCover(false);
+    });
+
   const goToCatalogIfOpen = () =>
     wrap(async () => {
       const state = await window.hcApi.catalogGetState();
@@ -236,6 +294,7 @@ function HomePage() {
           busy={busy}
           onOpen={openRecent}
           onRemove={removeRecent}
+          onEdit={beginEditProject}
         />
       ) : (
         <RecentTilesView
@@ -243,6 +302,7 @@ function HomePage() {
           busy={busy}
           onOpen={openRecent}
           onRemove={removeRecent}
+          onEdit={beginEditProject}
         />
       )}
 
@@ -291,7 +351,144 @@ function HomePage() {
           </Text>
         </Stack>
       </Modal>
+
+      <Modal
+        opened={editOpened}
+        onClose={() => {
+          closeEdit();
+          setEditTarget(null);
+        }}
+        title="Edit project"
+        size="md"
+      >
+        <Stack gap="md">
+          <TextInput
+            label="Project name"
+            value={editName}
+            onChange={(e) => setEditName(e.currentTarget.value)}
+            disabled={busy}
+          />
+          <Box>
+            <Text size="sm" fw={500} mb={6}>
+              Cover image
+            </Text>
+            <ProjectCoverPreview
+              src={
+                pendingImagePath
+                  ? window.hcApi.pathToFileUrl(pendingImagePath)
+                  : clearCover
+                    ? null
+                    : (editTarget?.coverImageUrl ?? null)
+              }
+            />
+          </Box>
+          <Group grow>
+            <Button
+              variant="light"
+              leftSection={<IconPhoto size={16} />}
+              onClick={() => void pickEditCover()}
+              disabled={busy}
+            >
+              Choose image…
+            </Button>
+            <Button
+              variant="default"
+              onClick={() => {
+                setPendingImagePath(null);
+                setClearCover(true);
+              }}
+              disabled={
+                busy ||
+                (!editTarget?.coverImageUrl && !pendingImagePath && !clearCover)
+              }
+            >
+              Remove image
+            </Button>
+          </Group>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => {
+                closeEdit();
+                setEditTarget(null);
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void saveEditProject()} disabled={busy}>
+              Save
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </>
+  );
+}
+
+function pathEquals(a: string, b: string): boolean {
+  return a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+}
+
+function ProjectCoverPreview({ src }: { src: string | null }) {
+  if (!src) {
+    return (
+      <Box
+        h={160}
+        style={{
+          borderRadius: "var(--mantine-radius-md)",
+          border: "1px solid var(--mantine-color-dark-4)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        bg="dark.6"
+      >
+        <IconPhoto size={40} stroke={1.25} opacity={0.35} />
+      </Box>
+    );
+  }
+  return (
+    <Image
+      src={src}
+      alt=""
+      h={160}
+      fit="cover"
+      radius="md"
+      fallbackSrc=""
+    />
+  );
+}
+
+function ProjectThumb({ src }: { src: string | null }) {
+  if (!src) {
+    return (
+      <Box
+        w={48}
+        h={48}
+        style={{
+          borderRadius: "var(--mantine-radius-sm)",
+          border: "1px solid var(--mantine-color-dark-4)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        bg="dark.6"
+      >
+        <IconPhoto size={20} stroke={1.25} opacity={0.35} />
+      </Box>
+    );
+  }
+  return (
+    <Image
+      src={src}
+      alt=""
+      w={48}
+      h={48}
+      radius="sm"
+      fit="cover"
+      fallbackSrc=""
+    />
   );
 }
 
@@ -300,11 +497,13 @@ function RecentListView({
   busy,
   onOpen,
   onRemove,
+  onEdit,
 }: {
   recents: RecentProjectItem[];
   busy: boolean;
   onOpen: (item: RecentProjectItem) => void;
   onRemove: (filePath: string) => void;
+  onEdit: (item: RecentProjectItem) => void;
 }) {
   if (recents.length === 0) {
     return (
@@ -318,14 +517,18 @@ function RecentListView({
     <Table striped highlightOnHover withTableBorder>
       <Table.Thead>
         <Table.Tr>
+          <Table.Th w={64}> </Table.Th>
           <Table.Th>Name</Table.Th>
           <Table.Th>Path</Table.Th>
-          <Table.Th w={120}>Actions</Table.Th>
+          <Table.Th w={180}>Actions</Table.Th>
         </Table.Tr>
       </Table.Thead>
       <Table.Tbody>
         {recents.map((item) => (
           <Table.Tr key={item.filePath}>
+            <Table.Td>
+              <ProjectThumb src={item.coverImageUrl} />
+            </Table.Td>
             <Table.Td>
               <Text
                 fw={500}
@@ -342,6 +545,16 @@ function RecentListView({
             </Table.Td>
             <Table.Td>
               <Group gap="xs">
+                <Tooltip label="Edit name and cover">
+                  <ActionIcon
+                    variant="light"
+                    color="gray"
+                    onClick={() => onEdit(item)}
+                    disabled={busy}
+                  >
+                    <IconPencil size={16} />
+                  </ActionIcon>
+                </Tooltip>
                 <Button
                   size="xs"
                   variant="light"
@@ -374,11 +587,13 @@ function RecentTilesView({
   busy,
   onOpen,
   onRemove,
+  onEdit,
 }: {
   recents: RecentProjectItem[];
   busy: boolean;
   onOpen: (item: RecentProjectItem) => void;
   onRemove: (filePath: string) => void;
+  onEdit: (item: RecentProjectItem) => void;
 }) {
   if (recents.length === 0) {
     return (
@@ -392,8 +607,15 @@ function RecentTilesView({
     <Container size="xl">
       <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
         {recents.map((item) => (
-          <Card key={item.filePath} withBorder padding="md" radius="md">
-            <Stack gap="xs">
+          <Card
+            key={item.filePath}
+            withBorder
+            padding={0}
+            radius="md"
+            style={{ overflow: "hidden" }}
+          >
+            <ProjectCoverPreview src={item.coverImageUrl} />
+            <Stack gap="xs" p="md">
               <Text
                 fw={600}
                 size="sm"
@@ -407,6 +629,16 @@ function RecentTilesView({
                 {item.filePath}
               </Text>
               <Group justify="flex-end" mt="auto">
+                <Tooltip label="Edit name and cover">
+                  <ActionIcon
+                    variant="light"
+                    color="gray"
+                    onClick={() => onEdit(item)}
+                    disabled={busy}
+                  >
+                    <IconPencil size={16} />
+                  </ActionIcon>
+                </Tooltip>
                 <Tooltip label="Remove from list">
                   <ActionIcon
                     variant="subtle"
