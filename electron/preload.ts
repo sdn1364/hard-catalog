@@ -32,6 +32,17 @@ export type FolderTreeNode = {
 }
 
 const api = {
+  /** Host OS (`process.platform`), for layout around window controls. */
+  platform: process.platform,
+  isWindowFullscreen: (): Promise<boolean> =>
+    ipcRenderer.invoke('window:isFullscreen'),
+  onFullscreenChange: (cb: (fullscreen: boolean) => void): (() => void) => {
+    const handler = (_e: unknown, fullscreen: boolean) => cb(fullscreen)
+    ipcRenderer.on('window:fullscreen-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('window:fullscreen-changed', handler)
+    }
+  },
   catalogNew: (payload?: { filePath?: string; projectName?: string }): Promise<CatalogState | null> =>
     ipcRenderer.invoke('catalog:new', payload),
   catalogOpen: (payload?: { filePath?: string }): Promise<CatalogState | null> =>

@@ -1,34 +1,15 @@
-import {
-  ActionIcon,
-  Box,
-  Button,
-  Card,
-  Container,
-  Group,
-  Image,
-  Modal,
-  SegmentedControl,
-  SimpleGrid,
-  Stack,
-  Table,
-  Text,
-  TextInput,
-  Tooltip,
-} from "@mantine/core";
+import { Box, Group, Stack, Text } from "@mantine/core";
 import { useDisclosure, useLocalStorage } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import {
-  IconDeviceFloppy,
-  IconFolderOpen,
-  IconPhoto,
-  IconPencil,
-  IconPlus,
-  IconTrash,
-  IconX,
-} from "@tabler/icons-react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
+import { EditProjectModal } from "../../features/project/edit/edit-project-modal";
+import { ViewModeToggle } from "../../features/project/open-recent/view-mode-toggle";
+import { CatalogFileModal } from "../../features/project/save/catalog-file-modal";
 import { useOpenTabs } from "../../open-tabs-context";
+import { pathEquals } from "../../shared/lib/path/path-equals";
+import { RecentListView } from "../../widgets/project-list/recent-list-view";
+import { RecentTilesView } from "../../widgets/project-list/recent-tiles-view";
 
 const VIEW_STORAGE_KEY = "hc-home-view";
 
@@ -254,7 +235,7 @@ function HomePage() {
     });
 
   return (
-    <>
+    <Box p="md">
       <Group justify="space-between" align="flex-start" mb="lg" wrap="wrap">
         <Stack gap={4}>
           <Text fw={700} size="lg">
@@ -265,27 +246,7 @@ function HomePage() {
             active catalog in this session.
           </Text>
         </Stack>
-        <Group>
-          <SegmentedControl
-            value={viewMode}
-            onChange={(v) => setViewMode(v as "list" | "tiles")}
-            data={[
-              { label: "List", value: "list" },
-              { label: "Tiles", value: "tiles" },
-            ]}
-          />
-          <Button leftSection={<IconPlus size={16} />} onClick={open}>
-            New or open…
-          </Button>
-          <Button
-            variant="light"
-            leftSection={<IconFolderOpen size={16} />}
-            onClick={() => void goToCatalogIfOpen()}
-            disabled={busy}
-          >
-            Open editor
-          </Button>
-        </Group>
+        <Group><ViewModeToggle value={viewMode} onChange={setViewMode} /></Group>
       </Group>
 
       {viewMode === "list" ? (
@@ -306,361 +267,49 @@ function HomePage() {
         />
       )}
 
-      <Modal opened={opened} onClose={close} title="Catalog file" size="md">
-        <Stack gap="md">
-          <TextInput
-            label="Project name (for New)"
-            value={modalProjectName}
-            onChange={(e) => setModalProjectName(e.currentTarget.value)}
-            disabled={busy}
-          />
-          <Group grow>
-            <Button
-              variant="light"
-              onClick={() => void modalNew()}
-              disabled={busy}
-            >
-              New
-            </Button>
-            <Button
-              variant="light"
-              onClick={() => void modalOpen()}
-              disabled={busy}
-            >
-              Open
-            </Button>
-          </Group>
-          <Group grow>
-            <Button
-              leftSection={<IconDeviceFloppy size={16} />}
-              onClick={() => void modalSave()}
-              disabled={busy || !catalogState.filePath}
-            >
-              Save
-            </Button>
-            <Button
-              variant="default"
-              onClick={() => void modalSaveAs()}
-              disabled={busy || !catalogState.filePath}
-            >
-              Save As
-            </Button>
-          </Group>
-          <Text size="xs" c="dimmed">
-            Active file: {catalogState.filePath ?? "None"}
-          </Text>
-        </Stack>
-      </Modal>
+      <CatalogFileModal
+        opened={opened}
+        onClose={close}
+        busy={busy}
+        projectName={modalProjectName}
+        activeFilePath={catalogState.filePath}
+        onProjectNameChange={setModalProjectName}
+        onNew={() => void modalNew()}
+        onOpen={() => void modalOpen()}
+        onSave={() => void modalSave()}
+        onSaveAs={() => void modalSaveAs()}
+      />
 
-      <Modal
+      <EditProjectModal
         opened={editOpened}
         onClose={() => {
           closeEdit();
           setEditTarget(null);
         }}
-        title="Edit project"
-        size="md"
-      >
-        <Stack gap="md">
-          <TextInput
-            label="Project name"
-            value={editName}
-            onChange={(e) => setEditName(e.currentTarget.value)}
-            disabled={busy}
-          />
-          <Box>
-            <Text size="sm" fw={500} mb={6}>
-              Cover image
-            </Text>
-            <ProjectCoverPreview
-              src={
-                pendingImagePath
-                  ? window.hcApi.pathToFileUrl(pendingImagePath)
-                  : clearCover
-                    ? null
-                    : (editTarget?.coverImageUrl ?? null)
-              }
-            />
-          </Box>
-          <Group grow>
-            <Button
-              variant="light"
-              leftSection={<IconPhoto size={16} />}
-              onClick={() => void pickEditCover()}
-              disabled={busy}
-            >
-              Choose image…
-            </Button>
-            <Button
-              variant="default"
-              onClick={() => {
-                setPendingImagePath(null);
-                setClearCover(true);
-              }}
-              disabled={
-                busy ||
-                (!editTarget?.coverImageUrl && !pendingImagePath && !clearCover)
-              }
-            >
-              Remove image
-            </Button>
-          </Group>
-          <Group justify="flex-end">
-            <Button
-              variant="default"
-              onClick={() => {
-                closeEdit();
-                setEditTarget(null);
-              }}
-              disabled={busy}
-            >
-              Cancel
-            </Button>
-            <Button onClick={() => void saveEditProject()} disabled={busy}>
-              Save
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-    </>
-  );
-}
-
-function pathEquals(a: string, b: string): boolean {
-  return a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
-}
-
-function ProjectCoverPreview({ src }: { src: string | null }) {
-  if (!src) {
-    return (
-      <Box
-        h={160}
-        style={{
-          borderRadius: "var(--mantine-radius-md)",
-          border: "1px solid var(--mantine-color-dark-4)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+        busy={busy}
+        name={editName}
+        onNameChange={setEditName}
+        previewSrc={
+          pendingImagePath
+            ? window.hcApi.pathToFileUrl(pendingImagePath)
+            : clearCover
+              ? null
+              : (editTarget?.coverImageUrl ?? null)
+        }
+        onPickImage={() => void pickEditCover()}
+        onRemoveImage={() => {
+          setPendingImagePath(null);
+          setClearCover(true);
         }}
-        bg="dark.6"
-      >
-        <IconPhoto size={40} stroke={1.25} opacity={0.35} />
-      </Box>
-    );
-  }
-  return (
-    <Image
-      src={src}
-      alt=""
-      h={160}
-      fit="cover"
-      radius="md"
-      fallbackSrc=""
-    />
-  );
-}
-
-function ProjectThumb({ src }: { src: string | null }) {
-  if (!src) {
-    return (
-      <Box
-        w={48}
-        h={48}
-        style={{
-          borderRadius: "var(--mantine-radius-sm)",
-          border: "1px solid var(--mantine-color-dark-4)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+        canRemoveImage={Boolean(
+          editTarget?.coverImageUrl || pendingImagePath || clearCover,
+        )}
+        onCancel={() => {
+          closeEdit();
+          setEditTarget(null);
         }}
-        bg="dark.6"
-      >
-        <IconPhoto size={20} stroke={1.25} opacity={0.35} />
-      </Box>
-    );
-  }
-  return (
-    <Image
-      src={src}
-      alt=""
-      w={48}
-      h={48}
-      radius="sm"
-      fit="cover"
-      fallbackSrc=""
-    />
-  );
-}
-
-function RecentListView({
-  recents,
-  busy,
-  onOpen,
-  onRemove,
-  onEdit,
-}: {
-  recents: RecentProjectItem[];
-  busy: boolean;
-  onOpen: (item: RecentProjectItem) => void;
-  onRemove: (filePath: string) => void;
-  onEdit: (item: RecentProjectItem) => void;
-}) {
-  if (recents.length === 0) {
-    return (
-      <Text c="dimmed" size="sm">
-        No recent catalogs yet. Use &quot;New or open…&quot; to create or open a
-        file.
-      </Text>
-    );
-  }
-  return (
-    <Table striped highlightOnHover withTableBorder>
-      <Table.Thead>
-        <Table.Tr>
-          <Table.Th w={64}> </Table.Th>
-          <Table.Th>Name</Table.Th>
-          <Table.Th>Path</Table.Th>
-          <Table.Th w={180}>Actions</Table.Th>
-        </Table.Tr>
-      </Table.Thead>
-      <Table.Tbody>
-        {recents.map((item) => (
-          <Table.Tr key={item.filePath}>
-            <Table.Td>
-              <ProjectThumb src={item.coverImageUrl} />
-            </Table.Td>
-            <Table.Td>
-              <Text
-                fw={500}
-                td={!item.exists ? "line-through" : undefined}
-                c={!item.exists ? "dimmed" : undefined}
-              >
-                {item.name}
-              </Text>
-            </Table.Td>
-            <Table.Td>
-              <Text size="sm" c="dimmed" lineClamp={2}>
-                {item.filePath}
-              </Text>
-            </Table.Td>
-            <Table.Td>
-              <Group gap="xs">
-                <Tooltip label="Edit name and cover">
-                  <ActionIcon
-                    variant="light"
-                    color="gray"
-                    onClick={() => onEdit(item)}
-                    disabled={busy}
-                  >
-                    <IconPencil size={16} />
-                  </ActionIcon>
-                </Tooltip>
-                <Button
-                  size="xs"
-                  variant="light"
-                  onClick={() => void onOpen(item)}
-                  disabled={busy}
-                >
-                  Open
-                </Button>
-                <Tooltip label="Remove from list">
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    onClick={() => void onRemove(item.filePath)}
-                    disabled={busy}
-                  >
-                    <IconX size={16} />
-                  </ActionIcon>
-                </Tooltip>
-              </Group>
-            </Table.Td>
-          </Table.Tr>
-        ))}
-      </Table.Tbody>
-    </Table>
-  );
-}
-
-function RecentTilesView({
-  recents,
-  busy,
-  onOpen,
-  onRemove,
-  onEdit,
-}: {
-  recents: RecentProjectItem[];
-  busy: boolean;
-  onOpen: (item: RecentProjectItem) => void;
-  onRemove: (filePath: string) => void;
-  onEdit: (item: RecentProjectItem) => void;
-}) {
-  if (recents.length === 0) {
-    return (
-      <Text c="dimmed" size="sm">
-        No recent catalogs yet. Use &quot;New or open…&quot; to create or open a
-        file.
-      </Text>
-    );
-  }
-  return (
-    <Container size="xl">
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
-        {recents.map((item) => (
-          <Card
-            key={item.filePath}
-            withBorder
-            padding={0}
-            radius="md"
-            style={{ overflow: "hidden" }}
-          >
-            <ProjectCoverPreview src={item.coverImageUrl} />
-            <Stack gap="xs" p="md">
-              <Text
-                fw={600}
-                size="sm"
-                lineClamp={2}
-                td={!item.exists ? "line-through" : undefined}
-                c={!item.exists ? "dimmed" : undefined}
-              >
-                {item.name}
-              </Text>
-              <Text size="xs" c="dimmed" lineClamp={3}>
-                {item.filePath}
-              </Text>
-              <Group justify="flex-end" mt="auto">
-                <Tooltip label="Edit name and cover">
-                  <ActionIcon
-                    variant="light"
-                    color="gray"
-                    onClick={() => onEdit(item)}
-                    disabled={busy}
-                  >
-                    <IconPencil size={16} />
-                  </ActionIcon>
-                </Tooltip>
-                <Tooltip label="Remove from list">
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    onClick={() => void onRemove(item.filePath)}
-                    disabled={busy}
-                  >
-                    <IconTrash size={16} />
-                  </ActionIcon>
-                </Tooltip>
-                <Button
-                  size="xs"
-                  onClick={() => void onOpen(item)}
-                  disabled={busy}
-                >
-                  Open
-                </Button>
-              </Group>
-            </Stack>
-          </Card>
-        ))}
-      </SimpleGrid>
-    </Container>
+        onSave={() => void saveEditProject()}
+      />
+    </Box>
   );
 }

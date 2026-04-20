@@ -29,6 +29,12 @@ type RecentProjectItem = {
 }
 
 type HardCatalogApi = {
+  /** Electron main `process.platform` (e.g. `darwin`, `win32`). */
+  platform: string
+  /** Native fullscreen (and macOS simple fullscreen); false in windowed mode. */
+  isWindowFullscreen: () => Promise<boolean>
+  /** Subscribe to fullscreen transitions; returns unsubscribe. */
+  onFullscreenChange: (cb: (fullscreen: boolean) => void) => () => void
   catalogNew: (payload?: { filePath?: string; projectName?: string }) => Promise<CatalogState | null>
   catalogOpen: (payload?: { filePath?: string }) => Promise<CatalogState | null>
   catalogSave: () => Promise<CatalogState | null>

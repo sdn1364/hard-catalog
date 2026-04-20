@@ -19,6 +19,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let currentCatalogPath: string | null = null;
 
+/** Last value sent on `window:fullscreen-changed` (single-window app). */
+let lastSentFullscreen = false;
+
+function windowIsFullscreenLike(win: BrowserWindow): boolean {
+  if (win.isFullScreen()) return true;
+  if (process.platform === "darwin" && win.isSimpleFullScreen()) return true;
+  return false;
+}
+
+function publishFullscreenIfChanged(win: BrowserWindow): void {
+  const fs = windowIsFullscreenLike(win);
+  if (fs === lastSentFullscreen) return;
+  lastSentFullscreen = fs;
+  if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("window:fullscreen-changed", fs);
+  }
+}
+
 const RECENT_MAX = 15;
 
 /** Stored in catalog SQLite `project_meta` as text (base64 payload + mime). */
@@ -223,7 +241,22 @@ function createWindow(): void {
   mainWindow.once("ready-to-show", () => {
     if (mainWindow) applyInitialTitleBarOverlay(mainWindow);
     mainWindow?.show();
+    if (mainWindow) publishFullscreenIfChanged(mainWindow);
   });
+
+  const onFullscreenMaybeChanged = (): void => {
+    if (mainWindow && !mainWindow.isDestroyed())
+      publishFullscreenIfChanged(mainWindow);
+  };
+  mainWindow.on("enter-full-screen", onFullscreenMaybeChanged);
+  mainWindow.on("leave-full-screen", onFullscreenMaybeChanged);
+  if (process.platform === "darwin") {
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    mainWindow.on("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(onFullscreenMaybeChanged, 80);
+    });
+  }
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -330,6 +363,12 @@ function registerIpc(): void {
   ipcMain.handle("window:setTitle", (_e, title: string) => {
     const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
     if (win && !win.isDestroyed()) win.setTitle(title);
+  });
+
+  ipcMain.handle("window:isFullscreen", () => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    if (!win || win.isDestroyed()) return false;
+    return windowIsFullscreenLike(win);
   });
 
   ipcMain.handle(
