@@ -1,12 +1,5 @@
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
-import {
-  BrowserWindow,
-  Menu,
-  app,
-  dialog,
-  ipcMain,
-  nativeTheme,
-} from "electron";
+import { BrowserWindow, Menu, app, dialog, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -202,11 +195,12 @@ type FolderTreeNode = {
 
 function applyInitialTitleBarOverlay(win: BrowserWindow): void {
   if (process.platform !== "win32" && process.platform !== "linux") return;
-  const dark = nativeTheme.shouldUseDarkColors;
-  // win.setTitleBarOverlay({
-  // color: dark ? "#1a1b1e" : "#ffffff",
-  // symbolColor: dark ? "#c1c2c5" : "#141517",
-  // });
+  win.setTitleBarOverlay({
+    // Windows WCO does not accept the CSS keyword `transparent` here.
+    color: "#00000000",
+    symbolColor: "#c1c2c5",
+    height: 48,
+  });
 }
 
 function createWindow(): void {
@@ -344,7 +338,9 @@ function registerIpc(): void {
       const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
       if (!win || win.isDestroyed()) return;
       if (process.platform !== "win32" && process.platform !== "linux") return;
-      win.setTitleBarOverlay(opts);
+      const patch =
+        opts.color === "transparent" ? { ...opts, color: "#00000000" } : opts;
+      win.setTitleBarOverlay(patch);
     },
   );
 
