@@ -1,6 +1,7 @@
 {
   "name": "hard-catalog",
   "version": "1.0.0",
+  "packageManager": "pnpm@10.27.0",
   "description": "Local hard drive catalog with library folders",
   "main": "dist-electron/main.js",
   "type": "module",

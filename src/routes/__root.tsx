@@ -1,12 +1,17 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { MantineProvider } from "@mantine/core";
 import { ModalsProvider } from "@mantine/modals";
 import { Notifications } from "@mantine/notifications";
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { ContextMenuProvider } from "mantine-contextmenu";
 import { TitleBarOverlaySync } from "../title-bar-overlay-sync";
 
-export const Route = createRootRoute({
+type AppRouterContext = {
+  queryClient: QueryClient;
+};
+
+export const Route = createRootRouteWithContext<AppRouterContext>()({
   component: RootLayout,
 });
 
