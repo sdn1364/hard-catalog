@@ -1,4 +1,4 @@
-import { Center, SegmentedControl } from "@mantine/core";
+import { Center, SegmentedControl, VisuallyHidden } from "@mantine/core";
 import { IconLayoutGrid, IconList } from "@tabler/icons-react";
 
 type ViewModeToggleProps = {
@@ -12,11 +12,20 @@ export function ViewModeToggle({ value, onChange }: ViewModeToggleProps) {
       value={value}
       onChange={(next) => onChange(next as "list" | "tiles")}
       data={[
-        { label: (<Center><IconList size={16} /></Center>), value: "list" },
         {
           label: (
             <Center>
-              <IconLayoutGrid size={16} />
+              <IconList size={16} aria-hidden="true" />
+              <VisuallyHidden>List view</VisuallyHidden>
+            </Center>
+          ),
+          value: "list",
+        },
+        {
+          label: (
+            <Center>
+              <IconLayoutGrid size={16} aria-hidden="true" />
+              <VisuallyHidden>Tile view</VisuallyHidden>
             </Center>
           ),
           value: "tiles",

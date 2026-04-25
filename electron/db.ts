@@ -29,6 +29,18 @@ export const folderAssets = sqliteTable('folder_assets', {
   updatedAt: integer('updated_at').notNull(),
 })
 
+export const folderPhotos = sqliteTable('folder_photos', {
+  id: text('id').primaryKey(),
+  folderId: text('folder_id').notNull(),
+  /** Base64 payload (not including data URL prefix). */
+  imageBase64: text('image_base64').notNull(),
+  imageName: text('image_name').notNull(),
+  imageMime: text('image_mime').notNull(),
+  position: integer('position').notNull().default(0),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
 export function openDatabase(filePath: string): BetterSqlite3.Database {
   if (dbPath === filePath && db) return db
   closeDatabase()
@@ -51,6 +63,84 @@ export function closeDatabase(): void {
 
 export function getCurrentDbPath(): string | null {
   return dbPath
+}
+
+type SqliteColumn = { name: string }
+
+function getTableColumnNames(database: BetterSqlite3.Database, table: string): Set<string> {
+  const rows = database.prepare(`PRAGMA table_info(${table})`).all() as SqliteColumn[]
+  return new Set(rows.map((r) => r.name))
+}
+
+function bufferFromSqlitePayload(value: unknown): Buffer | null {
+  if (value == null) return null
+  if (Buffer.isBuffer(value)) return value
+  if (value instanceof ArrayBuffer) return Buffer.from(value)
+  if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+  if (typeof value === 'string') return Buffer.from(value, 'utf8')
+  return null
+}
+
+/** Older catalogs stored raw bytes in `image_blob`; we store the same data as base64 in `image_base64`. */
+function migrateFolderPhotosBlobToBase64Text(database: BetterSqlite3.Database): void {
+  if (!getTableColumnNames(database, 'folder_photos').size) return
+  const names = getTableColumnNames(database, 'folder_photos')
+  if (names.has('image_base64') && !names.has('image_blob')) return
+
+  if (!names.has('image_base64')) {
+    database.exec('ALTER TABLE folder_photos ADD COLUMN image_base64 TEXT')
+  }
+
+  const toFill = database
+    .prepare(`SELECT id, image_blob, image_base64 FROM folder_photos`)
+    .all() as { id: string; image_blob?: unknown; image_base64: string | null }[]
+  const upd = database.prepare('UPDATE folder_photos SET image_base64 = ? WHERE id = ?')
+  for (const row of toFill) {
+    if (row.image_base64 != null && String(row.image_base64).length > 0) continue
+    const buf = bufferFromSqlitePayload(row.image_blob)
+    if (!buf || buf.length === 0) continue
+    upd.run(buf.toString('base64'), row.id)
+  }
+
+  if (getTableColumnNames(database, 'folder_photos').has('image_blob')) {
+    try {
+      database.exec('ALTER TABLE folder_photos DROP COLUMN image_blob')
+    } catch {
+      /* SQLite <3.35 or locked — leave old column; runtime code uses only image_base64 */
+    }
+  }
+}
+
+/** One-time import from legacy `folder_assets` (BLOB) into `folder_photos` (base64 text). */
+function backfillFolderAssetsIntoFolderPhotos(database: BetterSqlite3.Database): void {
+  if (!getTableColumnNames(database, 'folder_assets').size) return
+  if (!getTableColumnNames(database, 'folder_photos').has('image_base64')) return
+
+  const assets = database
+    .prepare(
+      'SELECT folder_id, image_blob, image_name, image_mime, updated_at FROM folder_assets',
+    )
+    .all() as { folder_id: string; image_blob: unknown; image_name: string; image_mime: string; updated_at: number }[]
+
+  const hasPhoto = database.prepare('SELECT 1 FROM folder_photos WHERE folder_id = ? LIMIT 1')
+  const insert = database.prepare(`
+    INSERT INTO folder_photos (id, folder_id, image_base64, image_name, image_mime, position, created_at, updated_at)
+    VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, 0, ?, ?)
+  `)
+
+  for (const fa of assets) {
+    if (hasPhoto.get(fa.folder_id)) continue
+    const buf = bufferFromSqlitePayload(fa.image_blob)
+    if (!buf || buf.length === 0) continue
+    insert.run(
+      fa.folder_id,
+      buf.toString('base64'),
+      fa.image_name,
+      fa.image_mime,
+      fa.updated_at,
+      fa.updated_at,
+    )
+  }
 }
 
 function migrate(database: BetterSqlite3.Database): void {
@@ -80,7 +170,24 @@ function migrate(database: BetterSqlite3.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders (parent_id, position, name);
+
+    CREATE TABLE IF NOT EXISTS folder_photos (
+      id TEXT PRIMARY KEY,
+      folder_id TEXT NOT NULL,
+      image_base64 TEXT NOT NULL,
+      image_name TEXT NOT NULL,
+      image_mime TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_folder_photos_folder ON folder_photos (folder_id, position, created_at);
   `)
+
+  migrateFolderPhotosBlobToBase64Text(database)
+  backfillFolderAssetsIntoFolderPhotos(database)
 
   const now = Date.now()
   database

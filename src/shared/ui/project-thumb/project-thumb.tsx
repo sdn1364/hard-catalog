@@ -1,5 +1,6 @@
 import { Box, Image } from "@mantine/core";
 import { IconPhoto } from "@tabler/icons-react";
+import classes from "./project-thumb.module.css";
 
 type ProjectThumbProps = {
   src: string | null;
@@ -11,13 +12,7 @@ export function ProjectThumb({ src }: ProjectThumbProps) {
       <Box
         w={48}
         h={48}
-        style={{
-          borderRadius: "var(--mantine-radius-sm)",
-          border: "1px solid var(--mantine-color-dark-4)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+        className={classes.placeholder}
         bg="dark.6"
       >
         <IconPhoto size={20} stroke={1.25} opacity={0.35} />

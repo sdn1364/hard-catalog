@@ -1,10 +1,10 @@
 .tab {
-  border-left: 1px solid var(--mantine-color-dark-4);
-  border-right: 1px solid var(--mantine-color-dark-4);
+  border-left: 1px solid var(--mantine-color-default-border);
+  border-right: 1px solid var(--mantine-color-default-border);
   -webkit-app-region: no-drag;
   max-width: 220px;
   &[data-active] {
-    background-color: var(--mantine-color-dark-7);
+    background-color: var(--mantine-color-default-hover);
   }
 }
 
@@ -21,15 +21,28 @@
   flex-wrap: nowrap;
   flex: 1;
   align-self: stretch;
-  background-color: var(--mantine-color-dark-5);
+  background-color: var(--mantine-color-body);
 }
 
 .headerActionIcon {
   -webkit-app-region: no-drag;
   height: 40px;
   width: 40px;
-  background-color: var(--mantine-color-dark-5);
+  background-color: var(--mantine-color-body);
   &:hover {
-    background-color: var(--mantine-color-dark-7);
+    background-color: var(--mantine-color-default-hover);
   }
+}
+
+.tabsRoot {
+  flex: 1;
+  min-width: 0;
+}
+
+.listDarwinWindowed {
+  padding-inline-start: 78px;
+}
+
+.listDefaultPadding {
+  padding-inline-end: 138px;
 }

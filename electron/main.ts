@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   closeDatabase,
-  folderAssets,
+  folderPhotos,
   folders,
   getCurrentDbPath,
   getOrm,
@@ -48,6 +48,18 @@ type RecentEntry = {
   name: string;
   lastOpenedAt: number;
 };
+
+const CATALOG_EXTENSIONS = new Set([".hcatalog", ".db", ".sqlite"]);
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".tif",
+  ".tiff",
+]);
 
 function getRecentStorePath(): string {
   return path.join(app.getPath("userData"), "recent-projects.json");
@@ -131,7 +143,9 @@ function readProjectCoverDataUrl(): string | null {
   return `data:${mimeRow.value};base64,${b64Row.value}`;
 }
 
-function readCoverDataUrlForCatalogPath(catalogFilePath: string): string | null {
+function readCoverDataUrlForCatalogPath(
+  catalogFilePath: string,
+): string | null {
   const fp = path.normalize(catalogFilePath);
   if (!fs.existsSync(fp)) return null;
   try {
@@ -202,13 +216,8 @@ type FolderTreeNode = {
   position: number;
   createdAt: number;
   updatedAt: number;
+  photoCount: number;
   children: FolderTreeNode[];
-  image?: {
-    fileName: string;
-    mimeType: string;
-    dataUrl: string;
-    updatedAt: number;
-  } | null;
 };
 
 function applyInitialTitleBarOverlay(win: BrowserWindow): void {
@@ -265,6 +274,14 @@ function createWindow(): void {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const allowedPrefix = process.env.VITE_DEV_SERVER_URL ?? "file://";
+    if (!url.startsWith(allowedPrefix)) {
+      event.preventDefault();
+    }
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -275,7 +292,7 @@ function registerIpc(): void {
     "catalog:new",
     async (_e, payload?: { filePath?: string; projectName?: string }) => {
       const chosen =
-        payload?.filePath ??
+        sanitizeCatalogFilePath(payload?.filePath) ??
         (await pickCatalogPath({
           title: "Create Catalog File",
           buttonLabel: "Create Catalog",
@@ -309,7 +326,7 @@ function registerIpc(): void {
     "catalog:open",
     async (_e, payload?: { filePath?: string }) => {
       const chosen =
-        payload?.filePath ??
+        sanitizeCatalogFilePath(payload?.filePath) ??
         (await pickExistingCatalogPath({
           title: "Open Catalog File",
           buttonLabel: "Open Catalog",
@@ -336,7 +353,7 @@ function registerIpc(): void {
       const source = currentCatalogPath ?? getCurrentDbPath();
       if (!source || !fs.existsSync(source)) return null;
       const target =
-        payload?.filePath ??
+        sanitizeCatalogFilePath(payload?.filePath) ??
         (await pickCatalogPath({
           title: "Save Catalog As",
           buttonLabel: "Save Copy",
@@ -401,6 +418,7 @@ function registerIpc(): void {
       },
     ) => {
       const fp = path.normalize(payload.filePath);
+      assertAllowedCatalogPath(fp);
       const items = loadRecentStore();
       const idx = items.findIndex((e) => path.normalize(e.filePath) === fp);
       if (idx < 0) throw new Error("Project is not in the recent list.");
@@ -429,6 +447,7 @@ function registerIpc(): void {
         payload.sourceImagePath !== ""
       ) {
         const src = path.normalize(payload.sourceImagePath);
+        assertAllowedImagePath(src);
         withCatalogFile(fp, () => {
           writeProjectCoverFromFile(src);
         });
@@ -466,6 +485,37 @@ function registerIpc(): void {
     return r.filePaths[0] ?? null;
   });
 
+  ipcMain.handle("dialog:pickImageFiles", async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const openFileProperties: Array<"openFile" | "multiSelections"> = [
+      "openFile",
+      "multiSelections",
+    ];
+    const dialogOptions = {
+      properties: openFileProperties,
+      filters: [
+        {
+          name: "Images",
+          extensions: [
+            "png",
+            "jpg",
+            "jpeg",
+            "webp",
+            "gif",
+            "bmp",
+            "tif",
+            "tiff",
+          ],
+        },
+      ],
+    };
+    const r = win
+      ? await dialog.showOpenDialog(win, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (r.canceled || r.filePaths.length === 0) return [];
+    return r.filePaths;
+  });
+
   ipcMain.handle("project:setName", (_e, name: string) => {
     const db = requireOrm();
     db.update(projectMeta)
@@ -485,13 +535,8 @@ function registerIpc(): void {
         position: folders.position,
         created_at: folders.createdAt,
         updated_at: folders.updatedAt,
-        image_blob: folderAssets.imageBlob,
-        image_name: folderAssets.imageName,
-        image_mime: folderAssets.imageMime,
-        image_updated_at: folderAssets.updatedAt,
       })
       .from(folders)
-      .leftJoin(folderAssets, eq(folderAssets.folderId, folders.id))
       .orderBy(asc(folders.position), sql`${folders.name} COLLATE NOCASE`)
       .all() as {
       id: string;
@@ -500,13 +545,58 @@ function registerIpc(): void {
       position: number;
       created_at: number;
       updated_at: number;
-      image_blob: Buffer | null;
-      image_name: string | null;
-      image_mime: string | null;
-      image_updated_at: number | null;
     }[];
 
-    return buildTree(rows);
+    const photoCounts = db
+      .select({
+        folder_id: folderPhotos.folderId,
+        count: sql<number>`count(*)`,
+      })
+      .from(folderPhotos)
+      .groupBy(folderPhotos.folderId)
+      .all() as {
+      folder_id: string;
+      count: number;
+    }[];
+
+    return buildTree(rows, photoCounts);
+  });
+
+  ipcMain.handle("folders:getPhotos", (_e, folderId: string) => {
+    const db = requireOrm();
+    assertFolderExists(db, folderId);
+    const photos = db
+      .select({
+        id: folderPhotos.id,
+        image_base64: folderPhotos.imageBase64,
+        image_name: folderPhotos.imageName,
+        image_mime: folderPhotos.imageMime,
+        position: folderPhotos.position,
+        created_at: folderPhotos.createdAt,
+        updated_at: folderPhotos.updatedAt,
+      })
+      .from(folderPhotos)
+      .where(eq(folderPhotos.folderId, folderId))
+      .orderBy(asc(folderPhotos.position), asc(folderPhotos.createdAt))
+      .all() as {
+      id: string;
+      image_base64: string;
+      image_name: string;
+      image_mime: string;
+      position: number;
+      created_at: number;
+      updated_at: number;
+    }[];
+
+    return photos.map((row) => ({
+      id: row.id,
+      fileName: row.image_name,
+      mimeType: row.image_mime,
+      dataUrl: `data:${row.image_mime};base64,${row.image_base64}`,
+      position: row.position,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   });
 
   ipcMain.handle("folders:seedDemo", () => {
@@ -623,19 +713,6 @@ function registerIpc(): void {
           "A folder with this name already exists at this level.",
         );
 
-      if (parentId) {
-        const hasImage = db
-          .select({ folderId: folderAssets.folderId })
-          .from(folderAssets)
-          .where(eq(folderAssets.folderId, parentId))
-          .limit(1)
-          .get();
-        if (hasImage)
-          throw new Error(
-            "Remove the parent folder image before adding subfolders.",
-          );
-      }
-
       const maxPos =
         db
           .select({
@@ -705,32 +782,136 @@ function registerIpc(): void {
     touchProjectUpdatedAt();
   });
 
+  const maxPhotoBytes = 40 * 1024 ** 2;
+
+  ipcMain.handle(
+    "folders:addPhotos",
+    (
+      _e,
+      payload: {
+        folderId: string;
+        photos: Array<{
+          fileName: string;
+          imageMime: string;
+          imageBase64: string;
+        }>;
+      },
+    ) => {
+      const db = requireOrm();
+      assertFolderExists(db, payload.folderId);
+      const items = (payload.photos ?? []).filter(
+        (p) =>
+          p &&
+          typeof p.imageBase64 === "string" &&
+          p.imageBase64.length > 0 &&
+          typeof p.fileName === "string",
+      );
+      if (items.length === 0) return;
+      const now = Date.now();
+      const maxPos =
+        db
+          .select({
+            n: sql<number>`COALESCE(MAX(${folderPhotos.position}), -1) + 1`,
+          })
+          .from(folderPhotos)
+          .where(eq(folderPhotos.folderId, payload.folderId))
+          .get()?.n ?? 0;
+
+      db.transaction((trx) => {
+        let nextPos = maxPos;
+        for (const item of items) {
+          const imageName = path.basename(
+            (item.fileName || "image").replace(/[/\\]/g, ""),
+          ) || "image";
+          const rawMime = (item.imageMime || "").trim() || inferMimeType(imageName);
+          let imageBase64 = item.imageBase64.replace(/\s/g, "");
+          try {
+            const buf = Buffer.from(imageBase64, "base64");
+            if (buf.length > maxPhotoBytes) {
+              throw new Error(
+                `Image too large: ${imageName} (max ${Math.floor(maxPhotoBytes / (1024 * 1024))} MB).`,
+              );
+            }
+            imageBase64 = buf.toString("base64");
+          } catch (e) {
+            if (e instanceof Error && e.message.startsWith("Image too large")) throw e;
+            throw new Error(`Invalid image data for “${imageName}”.`);
+          }
+          trx
+            .insert(folderPhotos)
+            .values({
+              id: randomUUID(),
+              folderId: payload.folderId,
+              imageBase64,
+              imageName,
+              imageMime: rawMime,
+              position: nextPos,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .run();
+          nextPos += 1;
+        }
+      });
+
+      db.update(folders)
+        .set({ updatedAt: now })
+        .where(eq(folders.id, payload.folderId))
+        .run();
+      touchProjectUpdatedAt();
+    },
+  );
+
+  ipcMain.handle(
+    "folders:removePhoto",
+    (_e, payload: { folderId: string; photoId: string }) => {
+      const db = requireOrm();
+      assertFolderExists(db, payload.folderId);
+      db.delete(folderPhotos).where(eq(folderPhotos.id, payload.photoId)).run();
+      db.update(folders)
+        .set({ updatedAt: Date.now() })
+        .where(eq(folders.id, payload.folderId))
+        .run();
+      touchProjectUpdatedAt();
+    },
+  );
+
+  ipcMain.handle("folders:clearPhotos", (_e, folderId: string) => {
+    const db = requireOrm();
+    assertFolderExists(db, folderId);
+    db.delete(folderPhotos).where(eq(folderPhotos.folderId, folderId)).run();
+    db.update(folders)
+      .set({ updatedAt: Date.now() })
+      .where(eq(folders.id, folderId))
+      .run();
+    touchProjectUpdatedAt();
+  });
+
   ipcMain.handle(
     "folders:setLeafImage",
     (_e, payload: { folderId: string; imagePath: string }) => {
       const db = requireOrm();
-      assertLeafFolder(db, payload.folderId);
+      assertFolderExists(db, payload.folderId);
       const normalizedPath = path.normalize(payload.imagePath);
+      assertAllowedImagePath(normalizedPath);
       const imageData = fs.readFileSync(normalizedPath);
+      const imageBase64 = imageData.toString("base64");
       const imageName = path.basename(normalizedPath);
       const imageMime = inferMimeType(normalizedPath);
       const now = Date.now();
-      db.insert(folderAssets)
+      db.delete(folderPhotos)
+        .where(eq(folderPhotos.folderId, payload.folderId))
+        .run();
+      db.insert(folderPhotos)
         .values({
+          id: randomUUID(),
           folderId: payload.folderId,
-          imageBlob: imageData,
+          imageBase64,
           imageName,
           imageMime,
+          position: 0,
+          createdAt: now,
           updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: folderAssets.folderId,
-          set: {
-            imageBlob: imageData,
-            imageName,
-            imageMime,
-            updatedAt: now,
-          },
         })
         .run();
       db.update(folders)
@@ -743,7 +924,7 @@ function registerIpc(): void {
 
   ipcMain.handle("folders:clearLeafImage", (_e, folderId: string) => {
     const db = requireOrm();
-    db.delete(folderAssets).where(eq(folderAssets.folderId, folderId)).run();
+    db.delete(folderPhotos).where(eq(folderPhotos.folderId, folderId)).run();
     db.update(folders)
       .set({ updatedAt: Date.now() })
       .where(eq(folders.id, folderId))
@@ -813,12 +994,17 @@ function buildTree(
     position: number;
     created_at: number;
     updated_at: number;
-    image_blob: Buffer | null;
-    image_name: string | null;
-    image_mime: string | null;
-    image_updated_at: number | null;
+  }[],
+  photoCounts: {
+    folder_id: string;
+    count: number;
   }[],
 ): FolderTreeNode[] {
+  const countByFolder = new Map<string, number>();
+  for (const row of photoCounts) {
+    countByFolder.set(row.folder_id, row.count);
+  }
+
   const nodes = new Map<string, FolderTreeNode>();
   for (const row of rows) {
     nodes.set(row.id, {
@@ -828,16 +1014,8 @@ function buildTree(
       position: row.position,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      photoCount: countByFolder.get(row.id) ?? 0,
       children: [],
-      image:
-        row.image_blob && row.image_name && row.image_mime
-          ? {
-              fileName: row.image_name,
-              mimeType: row.image_mime,
-              dataUrl: `data:${row.image_mime};base64,${row.image_blob.toString("base64")}`,
-              updatedAt: row.image_updated_at ?? row.updated_at,
-            }
-          : null,
     });
   }
 
@@ -884,7 +1062,29 @@ function inferMimeType(filePath: string): string {
   }
 }
 
-function assertLeafFolder(
+function assertAllowedCatalogPath(filePath: string): void {
+  const ext = path.extname(filePath).toLowerCase();
+  if (!path.isAbsolute(filePath) || !CATALOG_EXTENSIONS.has(ext)) {
+    throw new Error("Invalid catalog path.");
+  }
+}
+
+function assertAllowedImagePath(filePath: string): void {
+  const ext = path.extname(filePath).toLowerCase();
+  if (!path.isAbsolute(filePath) || !IMAGE_EXTENSIONS.has(ext)) {
+    throw new Error("Invalid image path.");
+  }
+  if (!fs.existsSync(filePath)) throw new Error("Image file not found.");
+}
+
+function sanitizeCatalogFilePath(filePath?: string): string | undefined {
+  if (!filePath) return undefined;
+  const normalized = path.normalize(filePath);
+  assertAllowedCatalogPath(normalized);
+  return normalized;
+}
+
+function assertFolderExists(
   db: ReturnType<typeof getOrm>,
   folderId: string,
 ): void {
@@ -895,14 +1095,6 @@ function assertLeafFolder(
     .limit(1)
     .get();
   if (!exists) throw new Error("Folder not found.");
-  const child = db
-    .select({ id: folders.id })
-    .from(folders)
-    .where(eq(folders.parentId, folderId))
-    .limit(1)
-    .get();
-  if (child)
-    throw new Error("Only bottom-most folders can have a preview image.");
 }
 
 async function pickCatalogPath(opts: {
@@ -921,7 +1113,9 @@ async function pickCatalogPath(opts: {
     ? await dialog.showSaveDialog(win, dialogOptions)
     : await dialog.showSaveDialog(dialogOptions);
   if (result.canceled || !result.filePath) return null;
-  return result.filePath;
+  const normalized = path.normalize(result.filePath);
+  assertAllowedCatalogPath(normalized);
+  return normalized;
 }
 
 async function pickExistingCatalogPath(opts: {
@@ -942,7 +1136,11 @@ async function pickExistingCatalogPath(opts: {
     ? await dialog.showOpenDialog(win, dialogOptions)
     : await dialog.showOpenDialog(dialogOptions);
   if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0] ?? null;
+  const candidate = result.filePaths[0];
+  if (!candidate) return null;
+  const normalized = path.normalize(candidate);
+  assertAllowedCatalogPath(normalized);
+  return normalized;
 }
 
 app.whenReady().then(() => {

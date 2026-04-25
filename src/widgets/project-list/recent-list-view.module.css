@@ -1,0 +1,4 @@
+.row {
+  content-visibility: auto;
+  contain-intrinsic-size: 54px;
+}

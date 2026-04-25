@@ -1,65 +1,95 @@
-import {
-  ActionIcon,
-  AppShell,
-  Badge,
-  Box,
-  Button,
-  Divider,
-  getTreeExpandedState,
-  Group,
-  Image,
-  RenderTreeNodePayload,
-  ScrollArea,
-  Stack,
-  Text,
-  TextInput,
-  Tooltip,
-  Tree,
-  TreeNodeData,
-  useTree,
-} from "@mantine/core";
-
+import { AppShell, Center, Group, Loader, Stack, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
+import { IconFolderPlus } from "@tabler/icons-react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
-import {
-  IconChevronDown,
-  IconFolder,
-  IconFolderOpen,
-  IconFolderPlus,
-  IconPhotoPlus,
-  IconTrash,
-} from "@tabler/icons-react";
-
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useContextMenu } from "mantine-contextmenu";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import classes from "./catalog.module.css";
 
 import { Split } from "@gfazioli/mantine-split-pane";
+import { CatalogFoldersPane } from "../../features/catalog/catalog-folders-pane";
+import { CatalogPhotosPane } from "../../features/catalog/catalog-photos-pane";
+import {
+  findNode,
+  findNodeByParentAndName,
+  getUniqueFolderName,
+} from "../../features/catalog/catalog-tree-utils";
 import { useOpenTabs } from "../../open-tabs-context";
 
 export const Route = createFileRoute("/(app)/catalog")({
   component: CatalogPage,
 });
 
-function folderNodesToTreeData(nodes: FolderTreeNode[]): TreeNodeData[] {
-  return nodes.map((n) => ({
-    value: n.id,
+type CatalogPhotoPayload = {
+  fileName: string;
+  imageMime: string;
+  imageBase64: string;
+};
 
-    label: n.name,
+function mimeTypeFromFileName(fileName: string): string {
+  const i = fileName.lastIndexOf(".");
+  const ext = i >= 0 ? fileName.slice(i).toLowerCase() : "";
+  switch (ext) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    case ".bmp":
+      return "image/bmp";
+    case ".tif":
+    case ".tiff":
+      return "image/tiff";
+    default:
+      return "application/octet-stream";
+  }
+}
 
-    children:
-      n.children.length > 0 ? folderNodesToTreeData(n.children) : undefined,
-  }));
+function readFileAsDataUrlBase64Part(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = r.result as string;
+      const comma = s.indexOf(",");
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+async function readImageFilesForCatalog(
+  files: File[],
+): Promise<CatalogPhotoPayload[]> {
+  const chunks: CatalogPhotoPayload[] = [];
+  const batchSize = 6;
+  for (let i = 0; i < files.length; i += batchSize) {
+    const batch = files.slice(i, i + batchSize);
+    const rows = await Promise.all(
+      batch.map(async (file) => {
+        const imageMime = file.type?.trim() || mimeTypeFromFileName(file.name);
+        const imageBase64 = await readFileAsDataUrlBase64Part(file);
+        return imageBase64.length > 0
+          ? { fileName: file.name, imageMime, imageBase64 }
+          : null;
+      }),
+    );
+    for (const row of rows) {
+      if (row) chunks.push(row);
+    }
+  }
+  return chunks;
 }
 
 function CatalogPage() {
   const navigate = useNavigate();
+  const { showContextMenu } = useContextMenu();
 
   const { ensureProjectTab } = useOpenTabs();
 
@@ -72,107 +102,38 @@ function CatalogPage() {
   const [folderTree, setFolderTree] = useState<FolderTreeNode[]>([]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  const [newRootName, setNewRootName] = useState("");
-
-  const [newChildName, setNewChildName] = useState("");
-
-  const [renameName, setRenameName] = useState("");
+  const [selectedPhotos, setSelectedPhotos] = useState<FolderPhoto[]>([]);
 
   const [busy, setBusy] = useState(false);
 
   const [ready, setReady] = useState(false);
-
-  const treeData = useMemo(
-    () => folderNodesToTreeData(folderTree),
-    [folderTree],
-  );
-
-  const [expandedState, setExpandedState] = useState<Record<string, boolean>>(
-    {},
-  );
-
-  useLayoutEffect(() => {
-    setExpandedState(getTreeExpandedState(treeData, "*"));
-  }, [treeData]);
-
-  const treeController = useTree({
-    selectedState: selectedId ? [selectedId] : [],
-
-    onSelectedStateChange: (next) => setSelectedId(next[0] ?? null),
-
-    expandedState,
-
-    onExpandedStateChange: setExpandedState,
-  });
 
   const selectedNode = useMemo(
     () => findNode(folderTree, selectedId),
     [folderTree, selectedId],
   );
 
-  const selectedIsLeaf = selectedNode
-    ? selectedNode.children.length === 0
-    : false;
+  const reloadTree = useCallback(async () => {
+    const rows = await window.hcApi.foldersGetTree();
 
-  const renderFolderNode = useCallback(
-    ({ node, expanded, hasChildren, elementProps }: RenderTreeNodePayload) => {
-      const meta = findNode(folderTree, node.value);
+    setFolderTree(rows);
 
-      return (
-        <Group gap={6} wrap="nowrap" {...elementProps}>
-          {hasChildren ? (
-            <IconChevronDown
-              size={14}
-              style={{
-                flexShrink: 0,
+    setSelectedId((prev) =>
+      prev && findNode(rows, prev) ? prev : (rows[0]?.id ?? null),
+    );
 
-                transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
+    try {
+      const next = await window.hcApi.catalogGetState();
 
-                transition: "transform 100ms ease",
-              }}
-            />
-          ) : (
-            <Box w={14} style={{ flexShrink: 0 }} />
-          )}
+      setProject(next);
 
-          {hasChildren ? (
-            expanded ? (
-              <IconFolderOpen
-                size={16}
-                style={{ flexShrink: 0 }}
-                color="var(--mantine-color-yellow-9)"
-              />
-            ) : (
-              <IconFolder
-                size={16}
-                style={{ flexShrink: 0 }}
-                color="var(--mantine-color-yellow-9)"
-              />
-            )
-          ) : (
-            <IconFolder
-              size={16}
-              style={{ flexShrink: 0 }}
-              color="var(--mantine-color-dimmed)"
-            />
-          )}
+      if (next.filePath) ensureProjectTab(next);
+    } catch {
+      /* ignore */
+    }
 
-          <Text size="sm" style={{ flex: 1 }}>
-            {node.label}
-          </Text>
-
-          {meta?.image ? (
-            <Badge size="xs" style={{ flexShrink: 0 }}>
-              image
-            </Badge>
-          ) : null}
-        </Group>
-      );
-    },
-
-    [folderTree],
-  );
+    return rows;
+  }, [ensureProjectTab]);
 
   useEffect(() => {
     const init = async () => {
@@ -200,27 +161,38 @@ function CatalogPage() {
     };
 
     void init();
-  }, [navigate, ensureProjectTab]);
+  }, [navigate, reloadTree]);
 
-  const reloadTree = async () => {
-    const rows = await window.hcApi.foldersGetTree();
-
-    setFolderTree(rows);
-
-    setSelectedId((prev) =>
-      prev && findNode(rows, prev) ? prev : (rows[0]?.id ?? null),
-    );
-
-    try {
-      const next = await window.hcApi.catalogGetState();
-
-      setProject(next);
-
-      if (next.filePath) ensureProjectTab(next);
-    } catch {
-      /* ignore */
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedPhotos([]);
+      return;
     }
-  };
+    let mounted = true;
+    void window.hcApi
+      .foldersGetPhotos(selectedId)
+      .then((rows) => {
+        if (mounted) setSelectedPhotos(rows);
+      })
+      .catch(() => {
+        if (mounted) setSelectedPhotos([]);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [selectedId]);
+
+  const setFolderPhotoCount = useCallback((folderId: string, count: number) => {
+    const update = (nodes: FolderTreeNode[]): FolderTreeNode[] =>
+      nodes.map((node) => {
+        if (node.id === folderId) {
+          return { ...node, photoCount: count };
+        }
+        if (node.children.length === 0) return node;
+        return { ...node, children: update(node.children) };
+      });
+    setFolderTree((prev) => update(prev));
+  }, []);
 
   const wrapAction = async (fn: () => Promise<void>) => {
     try {
@@ -240,281 +212,174 @@ function CatalogPage() {
     }
   };
 
-  const addRootFolder = async () =>
-    wrapAction(async () => {
+  const addFolderFromSelection = async (): Promise<{
+    rows: FolderTreeNode[];
+    added: FolderTreeNode;
+  } | null> => {
+    let result: { rows: FolderTreeNode[]; added: FolderTreeNode } | null = null;
+    await wrapAction(async () => {
+      const parentId = selectedNode?.id ?? null;
+      const folderName = getUniqueFolderName(
+        folderTree,
+        parentId,
+        "New Folder",
+      );
       await window.hcApi.foldersAdd({
-        parentId: null,
-        name: newRootName || "Folder",
+        parentId,
+        name: folderName,
       });
+      const rows = await reloadTree();
+      const added = findNodeByParentAndName(rows, parentId, folderName);
+      if (!added) return;
+      setSelectedId(added.id);
+      result = { rows, added };
+    });
+    return result;
+  };
 
-      setNewRootName("");
+  const renameFolder = async (id: string, name: string) => {
+    await wrapAction(async () => {
+      await window.hcApi.foldersRename({ id, name });
+      await reloadTree();
+    });
+  };
+
+  const removeFolder = async (id: string) =>
+    wrapAction(async () => {
+      const node = findNode(folderTree, id);
+      if (!node) throw new Error("Folder not found.");
+      const confirmed = window.confirm(
+        `Delete "${node.name}" and all subfolders? This cannot be undone.`,
+      );
+      if (!confirmed) return;
+
+      await window.hcApi.foldersRemove(id);
 
       await reloadTree();
     });
 
-  const seedDemoTree = async () =>
-    wrapAction(async () => {
-      await window.hcApi.foldersSeedDemo();
-
-      await reloadTree();
-
+  const addDroppedPhotosToFolder = async (files: File[]) => {
+    const folder = selectedNode;
+    if (!folder) return;
+    const photos = await readImageFilesForCatalog(files);
+    if (photos.length === 0) {
       notifications.show({
-        color: "green",
-
-        title: "Seed data added",
-
-        message: "Demo hierarchy is ready to explore.",
+        color: "yellow",
+        title: "No image data",
+        message:
+          "Could not read the dropped files. Try again or drop different images.",
       });
-    });
-
-  const addChildFolder = async () =>
-    wrapAction(async () => {
-      if (!selectedNode) throw new Error("Select a parent folder first.");
-
-      await window.hcApi.foldersAdd({
-        parentId: selectedNode.id,
-        name: newChildName || "Folder",
+      return;
+    }
+    await wrapAction(async () => {
+      await window.hcApi.foldersAddPhotos({
+        folderId: folder.id,
+        photos,
       });
-
-      setNewChildName("");
-
-      await reloadTree();
+      const nextPhotos = await window.hcApi.foldersGetPhotos(folder.id);
+      setSelectedPhotos(nextPhotos);
+      setFolderPhotoCount(folder.id, nextPhotos.length);
     });
+  };
 
-  const renameSelectedFolder = async () =>
+  const removeFolderPhoto = async (photoId: string) =>
     wrapAction(async () => {
       if (!selectedNode) throw new Error("Select a folder first.");
-
-      await window.hcApi.foldersRename({
-        id: selectedNode.id,
-        name: renameName || selectedNode.name,
-      });
-
-      setRenameName("");
-
-      await reloadTree();
-    });
-
-  const removeSelectedFolder = async () =>
-    wrapAction(async () => {
-      if (!selectedNode) throw new Error("Select a folder first.");
-
-      await window.hcApi.foldersRemove(selectedNode.id);
-
-      await reloadTree();
-    });
-
-  const chooseImageForLeaf = async () =>
-    wrapAction(async () => {
-      if (!selectedNode) throw new Error("Select a bottom-most folder first.");
-
-      if (!selectedIsLeaf)
-        throw new Error("Only bottom-most folders can have a preview image.");
-
-      const imagePath = await window.hcApi.pickImageFile();
-
-      if (!imagePath) return;
-
-      await window.hcApi.foldersSetLeafImage({
+      await window.hcApi.foldersRemovePhoto({
         folderId: selectedNode.id,
-        imagePath,
+        photoId,
       });
-
-      await reloadTree();
+      const nextPhotos = selectedPhotos.filter((photo) => photo.id !== photoId);
+      setSelectedPhotos(nextPhotos);
+      setFolderPhotoCount(selectedNode.id, nextPhotos.length);
     });
 
-  const clearLeafImage = async () =>
-    wrapAction(async () => {
-      if (!selectedNode) throw new Error("Select a folder first.");
-
-      await window.hcApi.foldersClearLeafImage(selectedNode.id);
-
-      await reloadTree();
-    });
+  const handlePageContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      showContextMenu([
+        {
+          key: "create-folder",
+          icon: <IconFolderPlus size={16} />,
+          title: "Create New Folder",
+          disabled: busy || !project.filePath,
+          onClick: () => void addFolderFromSelection(),
+        },
+      ])(event);
+    },
+    [addFolderFromSelection, busy, project.filePath, showContextMenu],
+  );
 
   if (!ready) {
-    return null;
+    return (
+      <Center h="calc(100dvh - 48px)" p="xl" role="status" aria-live="polite">
+        <Stack align="center" gap="sm">
+          <Loader size="md" type="dots" />
+          <Text size="sm" c="dimmed">
+            Loading catalog…
+          </Text>
+        </Stack>
+      </Center>
+    );
   }
 
   return (
-    <Stack gap="md">
-      <Split cursorVertical="vertical-resize" withKnob>
+    <Stack
+      gap="md"
+      p="md"
+      h="calc(100dvh - 48px)"
+      className={classes.pageStack}
+      onContextMenu={handlePageContextMenu}
+    >
+      <Split
+        cursorVertical="vertical-resize"
+        withKnob
+        className={classes.splitRoot}
+      >
         <Split.Pane maxWidth="30%" minWidth="20%">
-          <Stack gap="sm">
-            <Group>
-              <TextInput
-                placeholder="Root folder name"
-                value={newRootName}
-                onChange={(event) => setNewRootName(event.currentTarget.value)}
-                disabled={!project.filePath || busy}
-              />
-
-              <Button
-                leftSection={<IconFolderPlus size={16} />}
-                onClick={() => void addRootFolder()}
-                disabled={!project.filePath || busy}
-              >
-                Add Root
-              </Button>
-
-              <Button
-                variant="default"
-                onClick={() => void seedDemoTree()}
-                disabled={!project.filePath || busy || folderTree.length > 0}
-              >
-                Seed Demo Data
-              </Button>
-            </Group>
-
-            <ScrollArea h={480} type="always" offsetScrollbars>
-              {folderTree.length === 0 ? (
-                <Text size="sm" c="dimmed">
-                  No folders yet. Add a root folder to start.
-                </Text>
-              ) : (
-                <Tree
-                  data={treeData}
-                  tree={treeController}
-                  selectOnClick
-                  expandOnClick
-                  clearSelectionOnOutsideClick
-                  levelOffset="md"
-                  renderNode={renderFolderNode}
-                />
-              )}
-            </ScrollArea>
-          </Stack>
+          <CatalogFoldersPane
+            folderTree={folderTree}
+            selectedId={selectedId}
+            selectedNode={selectedNode}
+            busy={busy}
+            hasProjectFile={Boolean(project.filePath)}
+            onSelectedIdChange={setSelectedId}
+            onAddFolderFromSelection={addFolderFromSelection}
+            onRenameFolder={renameFolder}
+            onRemoveFolder={removeFolder}
+          />
         </Split.Pane>
         <Split.Resizer />
 
-        <Split.Pane grow>
-          <Stack
-            w="52%"
-            gap="sm"
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-          >
-            <Divider label="Selected Folder" />
-
-            <Group justify="space-between">
-              <Text fw={600}>{selectedNode?.name ?? "No folder selected"}</Text>
-
-              {selectedNode ? (
-                <Badge color={selectedIsLeaf ? "teal" : "blue"}>
-                  {selectedIsLeaf ? "Leaf Folder" : "Parent Folder"}
-                </Badge>
-              ) : null}
-            </Group>
-
-            <Group>
-              <TextInput
-                placeholder="New subfolder name"
-                value={newChildName}
-                onChange={(event) => setNewChildName(event.currentTarget.value)}
-                disabled={!selectedNode || busy}
-              />
-
-              <Button
-                onClick={() => void addChildFolder()}
-                disabled={!selectedNode || busy}
-              >
-                Add Subfolder
-              </Button>
-            </Group>
-
-            <Group>
-              <TextInput
-                placeholder="Rename selected folder"
-                value={renameName}
-                onChange={(event) => setRenameName(event.currentTarget.value)}
-                disabled={!selectedNode || busy}
-              />
-
-              <Button
-                variant="default"
-                onClick={() => void renameSelectedFolder()}
-                disabled={!selectedNode || busy}
-              >
-                Rename
-              </Button>
-
-              <Tooltip label="Delete selected folder and all children">
-                <ActionIcon
-                  color="red"
-                  variant="light"
-                  size="lg"
-                  onClick={() => void removeSelectedFolder()}
-                  disabled={!selectedNode || busy}
-                >
-                  <IconTrash size={18} />
-                </ActionIcon>
-              </Tooltip>
-            </Group>
-
-            <Divider label="Leaf Preview Image" />
-
-            <Group>
-              <Button
-                leftSection={<IconPhotoPlus size={16} />}
-                onClick={() => void chooseImageForLeaf()}
-                disabled={!selectedNode || !selectedIsLeaf || busy}
-              >
-                Set Image
-              </Button>
-
-              <Button
-                variant="default"
-                onClick={() => void clearLeafImage()}
-                disabled={!selectedNode || busy}
-              >
-                Clear Image
-              </Button>
-            </Group>
-
-            {!selectedNode ? (
-              <Text size="sm" c="dimmed">
-                Select a folder to edit it.
-              </Text>
-            ) : selectedNode.image ? (
-              <Stack>
-                <Text size="sm" c="dimmed">
-                  {selectedNode.image.fileName}
-                </Text>
-
-                <Box maw={620}>
-                  <Image
-                    src={selectedNode.image.dataUrl}
-                    radius="md"
-                    fit="contain"
-                    h={360}
-                  />
-                </Box>
-              </Stack>
-            ) : (
-              <Text size="sm" c="dimmed">
-                {selectedIsLeaf
-                  ? "No image assigned for this leaf folder."
-                  : "Only bottom-most folders can have a preview image."}
-              </Text>
-            )}
-          </Stack>
+        <Split.Pane
+          grow
+          p="md"
+          className={classes.photosPane}
+        >
+          <CatalogPhotosPane
+            selectedNode={selectedNode}
+            selectedPhotos={selectedPhotos}
+            busy={busy}
+            onDropPhotos={addDroppedPhotosToFolder}
+            onAddFolderFromSelection={async () => {
+              await addFolderFromSelection();
+            }}
+            onRenameFolder={renameFolder}
+            onRemoveFolder={removeFolder}
+            onRemoveFolderPhoto={removeFolderPhoto}
+          />
         </Split.Pane>
       </Split>
-      <AppShell.Footer p="md">
-        <Group
-          justify="space-between"
-          gap="md"
-          wrap="nowrap"
-          align="flex-start"
-        >
-          <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+      <AppShell.Footer p="md" withBorder>
+        <Group justify="space-between" gap="md" align="flex-start" wrap="wrap">
+          <Stack gap={2} className={classes.projectMetaStack} maw="100%">
             {project.filePath ? (
               <>
-                <Text size="xs" c="dimmed">
+                <Text size="xs" c="dimmed" className={classes.wordBreak}>
                   <Text span fw={600} c="var(--mantine-color-text)">
-                    Project:
-                  </Text>{" "}
-                  <Text span inherit title="Name stored in the catalog file">
+                    Project
+                  </Text>
+                  {": "}
+                  <Text span title="Name stored in the catalog file">
                     {(project.name ?? "").trim() || "Untitled Catalog"}
                   </Text>
                 </Text>
@@ -523,13 +388,14 @@ function CatalogPage() {
                   size="xs"
                   c="dimmed"
                   title={project.filePath ?? undefined}
+                  className={classes.overflowAnywhere}
+                  lineClamp={2}
                 >
                   <Text span fw={600} c="var(--mantine-color-text)">
-                    File:
-                  </Text>{" "}
-                  <Text span inherit>
-                    {project.filePath}
+                    File 
                   </Text>
+                  {": "}
+                  <Text span>{project.filePath}</Text>
                 </Text>
               </>
             ) : (
@@ -539,37 +405,19 @@ function CatalogPage() {
             )}
           </Stack>
 
-          <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+          <Text size="xs" c="dimmed" className={classes.noShrink} ta="right">
             {project.updatedAt != null
               ? `Last saved ${formatSavedAt(project.updatedAt)}`
-              : "Last saved —"}
+              : "Not saved yet"}
           </Text>
         </Group>
       </AppShell.Footer>
     </Stack>
   );
 }
-
 function formatSavedAt(timestamp: number): string {
-  return new Date(timestamp).toLocaleString(undefined, {
+  return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
-  });
-}
-
-function findNode(
-  nodes: FolderTreeNode[],
-  id: string | null,
-): FolderTreeNode | null {
-  if (!id) return null;
-
-  for (const node of nodes) {
-    if (node.id === id) return node;
-
-    const nested = findNode(node.children, id);
-
-    if (nested) return nested;
-  }
-
-  return null;
+  }).format(timestamp);
 }

@@ -2,7 +2,7 @@ import { ActionIcon, Box, Tabs, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconSmartHome, IconX } from "@tabler/icons-react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createCatalogHeaderActions } from "../../features/project/save/catalog-header-actions";
 import { useOpenTabs } from "../../open-tabs-context";
 import classes from "./app-tab-bar.module.css";
@@ -56,12 +56,21 @@ export function AppTabBar() {
     if (path) void selectProjectTab(path);
   };
 
-  const headerActions = createCatalogHeaderActions({
-    ensureProjectTab,
-    navigateToCatalog: () => {
+  const navigateToCatalog = useCallback(
+    () => {
       void navigate({ to: "/catalog" });
     },
-  });
+    [navigate],
+  );
+
+  const headerActions = useMemo(
+    () =>
+      createCatalogHeaderActions({
+        ensureProjectTab,
+        navigateToCatalog,
+      }),
+    [ensureProjectTab, navigateToCatalog],
+  );
 
   const runHeaderAction = async (fn: () => Promise<void>) => {
     if (tabBusy) return;
@@ -82,24 +91,22 @@ export function AppTabBar() {
       onChange={onTabChange}
       variant="outline"
       radius="xs"
-      activateTabWithKeyboard={false}
-      style={{ flex: 1, minWidth: 0 }}
+      className={classes.tabsRoot}
       classNames={{
         tab: classes.tab,
-        list: classes.list,
-      }}
-      styles={{
-        list: {
-          ...(window.hcApi.platform === "darwin" && !windowFullscreen
-            ? { paddingInlineStart: 78 }
-            : {}),
-        },
+        list: [
+          classes.list,
+          window.hcApi.platform === "darwin" && !windowFullscreen
+            ? classes.listDarwinWindowed
+            : classes.listDefaultPadding,
+        ].join(" "),
       }}
     >
       <Tabs.List aria-label="Workspace" justify="flex-start">
         <Tabs.Tab
           value={HOME_TAB}
           leftSection={<IconSmartHome size={16} stroke={1.75} />}
+          aria-label="Home"
           disabled={tabBusy}
         />
 
@@ -118,6 +125,7 @@ export function AppTabBar() {
                   disabled={tabBusy}
                   size="xs"
                   radius="xs"
+                  aria-label={`Close ${tab.name}`}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();

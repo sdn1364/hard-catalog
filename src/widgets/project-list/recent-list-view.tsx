@@ -2,6 +2,7 @@ import { ActionIcon, Button, Group, Table, Text, Tooltip } from "@mantine/core";
 import { IconPencil, IconX } from "@tabler/icons-react";
 import { ProjectThumb } from "../../shared/ui/project-thumb/project-thumb";
 import type { RecentProjectViewProps } from "./recent-project-types";
+import classes from "./recent-list-view.module.css";
 
 export function RecentListView({
   recents,
@@ -13,7 +14,7 @@ export function RecentListView({
   if (recents.length === 0) {
     return (
       <Text c="dimmed" size="sm">
-        No recent catalogs yet. Use &quot;New or open...&quot; to create or open a
+        No recent catalogs yet. Use &quot;New or open…&quot; to create or open a
         file.
       </Text>
     );
@@ -31,7 +32,10 @@ export function RecentListView({
       </Table.Thead>
       <Table.Tbody>
         {recents.map((item) => (
-          <Table.Tr key={item.filePath}>
+          <Table.Tr
+            key={item.filePath}
+            className={classes.row}
+          >
             <Table.Td>
               <ProjectThumb src={item.coverImageUrl} />
             </Table.Td>
@@ -55,6 +59,7 @@ export function RecentListView({
                   <ActionIcon
                     variant="light"
                     color="gray"
+                    aria-label={`Edit ${item.name}`}
                     onClick={() => onEdit(item)}
                     disabled={busy}
                   >
@@ -73,6 +78,7 @@ export function RecentListView({
                   <ActionIcon
                     variant="subtle"
                     color="gray"
+                    aria-label={`Remove ${item.name} from list`}
                     onClick={() => void onRemove(item.filePath)}
                     disabled={busy}
                   >

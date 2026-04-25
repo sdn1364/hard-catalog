@@ -1,6 +1,10 @@
-import type { TablerIcon } from "@tabler/icons-react";
-import { IconDeviceFloppy, IconFolderOpen, IconPlus } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
+import type { TablerIcon } from "@tabler/icons-react";
+import {
+  IconDeviceFloppy,
+  IconFolderOpen,
+  IconPlus,
+} from "@tabler/icons-react";
 
 type HeaderAction = {
   icon: TablerIcon;

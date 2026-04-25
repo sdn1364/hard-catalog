@@ -1,7 +1,18 @@
-import { ActionIcon, Button, Card, Container, Group, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
+import {
+  ActionIcon,
+  Button,
+  Card,
+  Container,
+  Group,
+  SimpleGrid,
+  Stack,
+  Text,
+  Tooltip,
+} from "@mantine/core";
 import { IconPencil, IconTrash } from "@tabler/icons-react";
 import { ProjectCoverPreview } from "../../shared/ui/project-cover-preview/project-cover-preview";
 import type { RecentProjectViewProps } from "./recent-project-types";
+import classes from "./recent-tiles-view.module.css";
 
 export function RecentTilesView({
   recents,
@@ -13,22 +24,22 @@ export function RecentTilesView({
   if (recents.length === 0) {
     return (
       <Text c="dimmed" size="sm">
-        No recent catalogs yet. Use &quot;New or open...&quot; to create or open a
-        file.
+        No recent catalogs yet. Use &quot;New or open…&quot; to create or open
+        a file.
       </Text>
     );
   }
 
   return (
-    <Container size="xl">
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
+    <Container fluid p="md" h="100%">
+      <SimpleGrid cols={{ base: 2, sm: 4, md: 6 }} spacing="md">
         {recents.map((item) => (
           <Card
             key={item.filePath}
             withBorder
             padding={0}
             radius="md"
-            style={{ overflow: "hidden" }}
+            className={classes.card}
           >
             <ProjectCoverPreview src={item.coverImageUrl} />
             <Stack gap="xs" p="md">
@@ -49,6 +60,7 @@ export function RecentTilesView({
                   <ActionIcon
                     variant="light"
                     color="gray"
+                    aria-label={`Edit ${item.name}`}
                     onClick={() => onEdit(item)}
                     disabled={busy}
                   >
@@ -59,6 +71,7 @@ export function RecentTilesView({
                   <ActionIcon
                     variant="subtle"
                     color="gray"
+                    aria-label={`Remove ${item.name} from list`}
                     onClick={() => void onRemove(item.filePath)}
                     disabled={busy}
                   >

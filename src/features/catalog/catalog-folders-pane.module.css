@@ -1,0 +1,38 @@
+.noShrink {
+  flex-shrink: 0;
+}
+
+.flex1 {
+  flex: 1;
+}
+
+.flex1MinWidth0 {
+  flex: 1;
+  min-width: 0;
+}
+
+.minHeight0 {
+  min-height: 0;
+}
+
+.minWidth0 {
+  min-width: 0;
+}
+
+.flex1MinHeight0 {
+  flex: 1;
+  min-height: 0;
+}
+
+.chevron {
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+}
+
+.chevron[data-expanded] {
+  transform: rotate(0deg);
+}
+
+.chevron:not([data-reduced-motion]) {
+  transition: transform 100ms ease;
+}

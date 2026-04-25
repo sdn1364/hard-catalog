@@ -1,0 +1,72 @@
+.dropzone {
+  border: 0;
+  background-color: transparent;
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.paneRoot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.acceptOverlay {
+  z-index: 10;
+  pointer-events: none;
+  border: 2px dashed var(--mantine-color-blue-filled);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-blue-light);
+}
+
+.rejectOverlay {
+  z-index: 10;
+  pointer-events: none;
+  border: 2px dashed var(--mantine-color-red-filled);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-red-0);
+}
+
+.contentStack {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  z-index: 1;
+}
+
+.contextMenuCursor {
+  cursor: context-menu;
+}
+
+.minWidthZero {
+  min-width: 0;
+}
+
+.noShrink {
+  flex-shrink: 0;
+}
+
+.emptyStateCenter {
+  flex: 1;
+  min-height: 0;
+}
+
+.photoFrame {
+  border-radius: var(--mantine-radius-md);
+  overflow: hidden;
+  content-visibility: auto;
+  contain-intrinsic-size: 260px;
+}
+
+.contextAnchor {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}

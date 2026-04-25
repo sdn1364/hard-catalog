@@ -1,5 +1,7 @@
 import "@gfazioli/mantine-split-pane/styles.css";
 import "@mantine/core/styles.css";
+import "@mantine/dropzone/styles.css";
+import "mantine-contextmenu/styles.css";
 import "@mantine/notifications/styles.css";
 
 import { createRouter, RouterProvider } from "@tanstack/react-router";

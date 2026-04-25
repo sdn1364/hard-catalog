@@ -1,0 +1,33 @@
+.pageStack {
+  overflow: auto;
+}
+
+.splitRoot {
+  flex: 1;
+  min-height: 0;
+}
+
+.photosPane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  background-color: red;
+}
+
+.projectMetaStack {
+  flex: 1;
+  min-width: 0;
+}
+
+.wordBreak {
+  word-break: break-word;
+}
+
+.overflowAnywhere {
+  overflow-wrap: anywhere;
+}
+
+.noShrink {
+  flex-shrink: 0;
+}

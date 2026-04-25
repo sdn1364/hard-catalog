@@ -1,5 +1,6 @@
 import { Box, Image } from "@mantine/core";
 import { IconPhoto } from "@tabler/icons-react";
+import classes from "./project-cover-preview.module.css";
 
 type ProjectCoverPreviewProps = {
   src: string | null;
@@ -14,13 +15,7 @@ export function ProjectCoverPreview({
     return (
       <Box
         h={height}
-        style={{
-          borderRadius: "var(--mantine-radius-md)",
-          border: "1px solid var(--mantine-color-dark-4)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+        className={classes.placeholder}
         bg="dark.6"
       >
         <IconPhoto size={40} stroke={1.25} opacity={0.35} />
